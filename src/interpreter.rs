@@ -67,7 +67,7 @@ pub fn interpret(statements: &Vec<Statement>, global_variables: &mut HashMap<Str
 fn interpret_statement(statement: &Statement, variables: &mut Variables) {
     match statement {
         Statement::Expression(expression) => {
-            println!("{:?}", interpret_expression(expression, variables))
+            println!("{}", interpret_expression(expression, variables));
         }
         Statement::VariableDeclaration { variable, value } => {
             let value = interpret_expression(value, variables);
@@ -272,6 +272,37 @@ fn interpret_expression(expression: &Expression, variables: &mut Variables) -> V
                         variables.set_variable(variable, value.clone()).unwrap();
                         value
                     }
+                    ExpressionType::TupleAccess { expression, index } => {
+                        // We access the tuple field and mutate it if the field is in a variable.
+                        let mut current_expression = expression;
+                        let mut indices = vec![*index];
+                        loop {
+                            match &current_expression.expression_type {
+                                ExpressionType::TupleAccess { expression, index } => {
+                                    current_expression = expression;
+                                    indices.push(*index);
+                                }
+                                ExpressionType::Variable(variable) => {
+                                    let mut variable_value =
+                                        variables.get_variable(variable).unwrap();
+                                    let mut lvalue = &mut variable_value;
+                                    for &index in indices.iter().rev() {
+                                        let Value::Tuple(values) = lvalue else { unreachable!() };
+                                        lvalue = &mut values[index];
+                                    }
+                                    *lvalue = value.clone();
+                                    variables.set_variable(variable, variable_value).unwrap();
+                                    break;
+                                }
+                                _ => {
+                                    // NOTE: may change when I add pointers.
+                                    interpret_expression(expression, variables);
+                                    break;
+                                }
+                            }
+                        }
+                        value
+                    }
                     _ => {
                         unreachable!()
                     }
@@ -281,5 +312,17 @@ fn interpret_expression(expression: &Expression, variables: &mut Variables) -> V
         ExpressionType::Variable(variable) => variables.get_variable(variable).unwrap(), // TODO: Handle this gracefully.
         ExpressionType::Literal(value) => value.clone(),
         ExpressionType::Grouping(expression) => interpret_expression(expression, variables),
+        ExpressionType::Tuple(expressions) => Value::Tuple(
+            expressions
+                .iter()
+                .map(|expression| interpret_expression(expression, variables))
+                .collect(),
+        ),
+        ExpressionType::TupleAccess { expression, index } => {
+            let Value::Tuple(values) = interpret_expression(expression, variables) else {
+                unreachable!()
+            };
+            values[*index].clone()
+        }
     }
 }

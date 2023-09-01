@@ -23,7 +23,7 @@ fn run(program: &str, global_variables: &mut HashMap<String, Value>) {
 
     let mut global_types = HashMap::new();
     for (variable, value) in global_variables.iter() {
-        global_types.insert(variable.clone(), value.base_type());
+        global_types.insert(variable.clone(), value.value_type());
     }
     let statements = match parser::parse(&tokens, &global_types) {
         Ok(statements) => statements,

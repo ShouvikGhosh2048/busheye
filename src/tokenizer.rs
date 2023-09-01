@@ -1,10 +1,11 @@
-use std::error::Error;
+use std::{error::Error, fmt::Display};
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum BaseType {
+#[derive(Debug, PartialEq, Clone)]
+pub enum Type {
     Number,
     String,
     Boolean,
+    Tuple(Vec<Type>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -12,14 +13,39 @@ pub enum Value {
     Number(f64),
     String(String),
     Boolean(bool),
+    Tuple(Vec<Value>),
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Number(number) => write!(f, "{number}"),
+            Value::String(string) => write!(f, "{string}"),
+            Value::Boolean(boolean) => write!(f, "{boolean}"),
+            Value::Tuple(values) => {
+                write!(f, "(")?;
+                let mut values = values.iter();
+                if let Some(first_value) = values.next() {
+                    write!(f, "{first_value}")?;
+                    for value in values {
+                        write!(f, ", {value}")?;
+                    }
+                }
+                write!(f, ")")
+            }
+        }
+    }
 }
 
 impl Value {
-    pub fn base_type(&self) -> BaseType {
+    pub fn value_type(&self) -> Type {
         match self {
-            Value::Number(_) => BaseType::Number,
-            Value::String(_) => BaseType::String,
-            Value::Boolean(_) => BaseType::Boolean,
+            Value::Number(_) => Type::Number,
+            Value::String(_) => Type::String,
+            Value::Boolean(_) => Type::Boolean,
+            Value::Tuple(values) => {
+                Type::Tuple(values.iter().map(|value| value.value_type()).collect())
+            }
         }
     }
 }
@@ -50,6 +76,8 @@ pub enum TokenType {
     While,
     Colon,
     Semicolon,
+    Comma,
+    Dot,
     Number,
     String,
     Bool,
@@ -113,6 +141,14 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
             ';' => tokens.push(Token {
                 line,
                 token_type: TokenType::Semicolon,
+            }),
+            ',' => tokens.push(Token {
+                line,
+                token_type: TokenType::Comma,
+            }),
+            '.' => tokens.push(Token {
+                line,
+                token_type: TokenType::Dot,
             }),
             '&' => match chars.peek() {
                 Some('&') => {
@@ -242,8 +278,13 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
                 }
 
                 // Check for floating point and if it has one, add the section after the floating point.
+                // Note: If we have a string "a.2.2", we want to parse it as [variable a, dot, 2, dot 2],
+                // and not as [variable a, dot, 2.2].
+                // So we don't add a dot if the last token in tokens is a dot.
                 if let Some(char) = chars.peek() {
-                    if *char == '.' {
+                    if *char == '.'
+                        && tokens.last().map(|token| &token.token_type) != Some(&TokenType::Dot)
+                    {
                         number.push('.');
                         chars.next();
                         loop {
