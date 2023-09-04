@@ -1,4 +1,7 @@
-use std::{collections::HashMap, error::Error, fmt::Debug};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+};
 
 use crate::tokenizer::{Token, TokenType, Type, Value};
 
@@ -7,18 +10,26 @@ pub enum UnaryOperation {
     Not,
 }
 
+fn unary_parse_error(operation: &UnaryOperation, expression: &Expression) -> ParseError {
+    ParseError {
+        lines: expression.lines,
+        error: format!(
+            "Can't apply {operation:?} on {expression}.\nExpression type: {:?}",
+            expression.value_type
+        ),
+    }
+}
+
 impl UnaryOperation {
-    fn value_type(&self, expression_type: &Type) -> Result<Type, Box<dyn Error>> {
+    fn value_type(&self, expression: &Expression) -> Result<Type, ParseError> {
         match self {
-            UnaryOperation::Minus => match expression_type {
+            UnaryOperation::Minus => match &expression.value_type {
                 Type::Number => Ok(Type::Number),
-                expression_type => Err(format!("Can't apply minus on {expression_type:?}.").into()),
+                _ => Err(unary_parse_error(self, expression)),
             },
-            UnaryOperation::Not => match expression_type {
+            UnaryOperation::Not => match &expression.value_type {
                 Type::Boolean => Ok(Type::Boolean),
-                expression_type => {
-                    Err(format!("Can't apply not operator on {expression_type:?}.").into())
-                }
+                _ => Err(unary_parse_error(self, expression)),
             },
         }
     }
@@ -53,71 +64,111 @@ pub enum BinaryOperation {
     Assignment,
 }
 
+fn binary_parse_error(
+    operation: &BinaryOperation,
+    left_expression: &Expression,
+    right_expression: &Expression,
+) -> ParseError {
+    ParseError { lines: (left_expression.lines.0, right_expression.lines.1), error: format!("Can't apply {operation:?} on {left_expression} and {right_expression}.\nLeft type: {:?}\nRight type: {:?}", left_expression.value_type, right_expression.value_type) }
+}
+
 impl BinaryOperation {
-    pub fn value_type(&self, left_type: &Type, right_type: &Type) -> Result<Type, Box<dyn Error>> {
+    pub fn value_type(
+        &self,
+        left_expression: &Expression,
+        right_expression: &Expression,
+    ) -> Result<Type, ParseError> {
         match self {
-            BinaryOperation::Add => match (left_type, right_type) {
-                (Type::Number, Type::Number) => Ok(Type::Number),
-                (Type::String, Type::String) => Ok(Type::String),
-                _ => Err(format!("Can't add {left_type:?} and {right_type:?}.").into()),
-            },
-            BinaryOperation::Subtract => match (left_type, right_type) {
-                (Type::Number, Type::Number) => Ok(Type::Number),
-                _ => Err(format!("Can't subtract {right_type:?} from {left_type:?}.").into()),
-            },
-            BinaryOperation::Multiply => match (left_type, right_type) {
-                (Type::Number, Type::Number) => Ok(Type::Number),
-                _ => Err(format!("Can't add {left_type:?} and {right_type:?}.").into()),
-            },
-            BinaryOperation::Divide => match (left_type, right_type) {
-                (Type::Number, Type::Number) => Ok(Type::Number),
-                _ => Err(format!("Can't divide {left_type:?} by {right_type:?}.").into()),
-            },
-            BinaryOperation::Equal => match (left_type, right_type) {
-                (Type::Number, Type::Number)
-                | (Type::String, Type::String)
-                | (Type::Boolean, Type::Boolean) => Ok(Type::Boolean),
-                _ => Err(format!("Can't compare {left_type:?} with {right_type:?}.").into()),
-            },
-            BinaryOperation::NotEqual => match (left_type, right_type) {
-                (Type::Number, Type::Number)
-                | (Type::String, Type::String)
-                | (Type::Boolean, Type::Boolean) => Ok(Type::Boolean),
-                _ => Err(format!("Can't compare {left_type:?} with {right_type:?}.").into()),
-            },
-            BinaryOperation::Less => match (left_type, right_type) {
-                (Type::Number, Type::Number) | (Type::String, Type::String) => Ok(Type::Boolean),
-                _ => Err(format!("Can't compare {left_type:?} with {right_type:?}.").into()),
-            },
-            BinaryOperation::LessEqual => match (left_type, right_type) {
-                (Type::Number, Type::Number) | (Type::String, Type::String) => Ok(Type::Boolean),
-                _ => Err(format!("Can't compare {left_type:?} with {right_type:?}.").into()),
-            },
-            BinaryOperation::Greater => match (left_type, right_type) {
-                (Type::Number, Type::Number) | (Type::String, Type::String) => Ok(Type::Boolean),
-                _ => Err(format!("Can't compare {left_type:?} with {right_type:?}.").into()),
-            },
-            BinaryOperation::GreaterEqual => match (left_type, right_type) {
-                (Type::Number, Type::Number) | (Type::String, Type::String) => Ok(Type::Boolean),
-                _ => Err(format!("Can't compare {left_type:?} with {right_type:?}.").into()),
-            },
-            BinaryOperation::Or => match (left_type, right_type) {
-                (Type::Boolean, Type::Boolean) => Ok(Type::Boolean),
-                _ => Err(
-                    format!("Can't apply || operator on {left_type:?} by {right_type:?}.").into(),
-                ),
-            },
-            BinaryOperation::And => match (left_type, right_type) {
-                (Type::Boolean, Type::Boolean) => Ok(Type::Boolean),
-                _ => Err(
-                    format!("Can't apply && operator on {left_type:?} by {right_type:?}.").into(),
-                ),
-            },
+            BinaryOperation::Add => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Number, Type::Number) => Ok(Type::Number),
+                    (Type::String, Type::String) => Ok(Type::String),
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::Subtract => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Number, Type::Number) => Ok(Type::Number),
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::Multiply => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Number, Type::Number) => Ok(Type::Number),
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::Divide => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Number, Type::Number) => Ok(Type::Number),
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::Equal => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Number, Type::Number)
+                    | (Type::String, Type::String)
+                    | (Type::Boolean, Type::Boolean) => Ok(Type::Boolean),
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::NotEqual => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Number, Type::Number)
+                    | (Type::String, Type::String)
+                    | (Type::Boolean, Type::Boolean) => Ok(Type::Boolean),
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::Less => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Number, Type::Number) | (Type::String, Type::String) => {
+                        Ok(Type::Boolean)
+                    }
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::LessEqual => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Number, Type::Number) | (Type::String, Type::String) => {
+                        Ok(Type::Boolean)
+                    }
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::Greater => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Number, Type::Number) | (Type::String, Type::String) => {
+                        Ok(Type::Boolean)
+                    }
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::GreaterEqual => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Number, Type::Number) | (Type::String, Type::String) => {
+                        Ok(Type::Boolean)
+                    }
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::Or => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Boolean, Type::Boolean) => Ok(Type::Boolean),
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
+            BinaryOperation::And => {
+                match (&left_expression.value_type, &right_expression.value_type) {
+                    (Type::Boolean, Type::Boolean) => Ok(Type::Boolean),
+                    _ => Err(binary_parse_error(self, left_expression, right_expression)),
+                }
+            }
             BinaryOperation::Assignment => {
-                if left_type == right_type {
+                if left_expression.value_type == right_expression.value_type {
                     Ok(Type::Boolean)
                 } else {
-                    Err(format!("Can't assign {right_type:?} to {left_type:?}.").into())
+                    Err(binary_parse_error(self, left_expression, right_expression))
                 }
             }
         }
@@ -171,6 +222,7 @@ pub enum ExpressionType {
 pub struct Expression {
     pub value_type: Type,
     pub expression_type: ExpressionType,
+    pub lines: (usize, usize),
 }
 
 impl Debug for Expression {
@@ -228,8 +280,34 @@ impl Debug for Expression {
     }
 }
 
+impl Display for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.expression_type {
+            ExpressionType::Unary {
+                operation,
+                expression,
+            } => {
+                write!(f, "{operation:?}{expression:?}")
+            }
+            ExpressionType::Binary {
+                operation,
+                left_expression,
+                right_expression,
+            } => {
+                write!(f, "{left_expression:?} {operation:?} {right_expression:?}")
+            }
+            ExpressionType::TupleAccess { expression, index } => {
+                write!(f, "{expression:?}.{index}")
+            }
+            _ => {
+                write!(f, "{self:?}")
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
-pub enum Statement {
+pub enum StatementType {
     VariableDeclaration {
         variable: String,
         value: Expression,
@@ -245,6 +323,12 @@ pub enum Statement {
         expression: Expression,
         statement: Box<Statement>,
     },
+}
+
+#[derive(Debug)]
+pub struct Statement {
+    pub statement: StatementType,
+    lines: (usize, usize),
 }
 
 pub fn get_type(variable: &String, stack: &[HashMap<String, Type>]) -> Option<Type> {
@@ -263,10 +347,16 @@ pub fn set_type(variable: &str, value_type: Type, stack: &mut [HashMap<String, T
     }
 }
 
+#[derive(Debug)]
+pub struct ParseError {
+    pub lines: (usize, usize),
+    pub error: String,
+}
+
 pub fn parse(
     tokens: &Vec<Token>,
     global_variables: &HashMap<String, Type>,
-) -> Result<Vec<Statement>, Vec<Box<dyn Error>>> {
+) -> Result<Vec<Statement>, Vec<ParseError>> {
     let mut current_token = 0;
     let mut errors = vec![];
     let mut variables = vec![global_variables.clone()];
@@ -274,7 +364,7 @@ pub fn parse(
 
     while current_token < tokens.len() {
         let Some(statement) = parse_statement(tokens, &mut current_token, &mut errors, &mut variables) else {
-            return Err(errors);
+            continue;
         };
         statements.push(statement);
     }
@@ -286,59 +376,116 @@ pub fn parse(
     }
 }
 
+fn panic_forward(tokens: &Vec<Token>, current_token: &mut usize) {
+    while *current_token < tokens.len() {
+        if matches!(
+            tokens[*current_token].token_type,
+            TokenType::If
+                | TokenType::While
+                | TokenType::Let
+                | TokenType::LeftBrace
+                | TokenType::RightBrace
+        ) {
+            break;
+        }
+
+        *current_token += 1;
+    }
+}
+
 /// Parses a block statement.
 pub fn parse_block_statement(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Statement> {
-    if tokens.get(*current_token).map(|token| &token.token_type) != Some(&TokenType::LeftBrace) {
-        errors.push("Expected left brace.".into());
-        return None;
-    }
+    let start_line = match tokens
+        .get(*current_token)
+        .map(|token| (&token.token_type, token))
+    {
+        Some((TokenType::LeftBrace, token)) => token.lines.0,
+        _ => {
+            panic_forward(tokens, current_token);
+            return None;
+        }
+    };
     *current_token += 1;
 
     variables.push(HashMap::new());
     let mut statements = vec![];
+    let mut statement_error_occured = false;
+    let mut end_line = start_line;
     loop {
-        match tokens.get(*current_token).map(|token| &token.token_type) {
-            Some(&TokenType::RightBrace) => {
+        match tokens
+            .get(*current_token)
+            .map(|token| (&token.token_type, token))
+        {
+            Some((&TokenType::RightBrace, token)) => {
+                end_line = token.lines.1;
                 *current_token += 1;
                 variables.pop();
                 break;
             }
             None => {
-                errors.push("Unmatched left brace.".into());
+                errors.push(ParseError {
+                    lines: (start_line, end_line),
+                    error: "Unmatched left brace.".into(),
+                });
                 variables.pop();
                 return None;
             }
             _ => {
                 let Some(statement) = parse_statement(tokens, current_token, errors, variables) else {
-                    variables.pop();
-                    return None;
+                    statement_error_occured = true;
+                    // If panic_forward stopped at a right brace, we break out of the block.
+                    if tokens[*current_token - 1].token_type == TokenType::RightBrace {
+                        variables.pop();
+                        return None;
+                    }
+                    continue;
                 };
+                end_line = statement.lines.1;
                 statements.push(statement);
             }
         }
     }
-    Some(Statement::Block(statements))
+
+    if statement_error_occured {
+        return None;
+    }
+
+    Some(Statement {
+        lines: (start_line, end_line),
+        statement: StatementType::Block(statements),
+    })
 }
 
 pub fn parse_statement(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Statement> {
-    match tokens[*current_token].token_type {
-        TokenType::Let => {
+    match tokens
+        .get(*current_token)
+        .map(|token| (&token.token_type, token))
+    {
+        Some((&TokenType::Let, token)) => {
+            let line_start = token.lines.0;
             *current_token += 1;
 
-            let variable = match tokens.get(*current_token).map(|token| &token.token_type) {
-                Some(TokenType::Variable(variable)) => variable.clone(),
+            let (variable, variable_end) = match tokens
+                .get(*current_token)
+                .map(|token| (&token.token_type, token))
+            {
+                Some((TokenType::Variable(variable), token)) => (variable.clone(), token.lines.1),
                 _ => {
-                    errors.push("Expected variable after let.".into());
+                    errors.push(ParseError {
+                        lines: (line_start, token.lines.1),
+                        error: "Expected variable after let.".into(),
+                    });
+                    panic_forward(tokens, current_token);
                     return None;
                 }
             };
@@ -347,125 +494,181 @@ pub fn parse_statement(
             let variable_type = match tokens.get(*current_token).map(|token| &token.token_type) {
                 Some(TokenType::Colon) => {
                     *current_token += 1;
-                    let variable_type = parse_type(tokens, current_token, errors)?;
+                    let Some(variable_type) = parse_type(tokens, current_token, errors) else {
+                        panic_forward(tokens, current_token);
+                        return None;
+                    };
                     Some(variable_type)
                 }
                 _ => None,
             };
 
-            if tokens.get(*current_token).map(|token| &token.token_type) != Some(&TokenType::Equal)
-            {
-                errors.push("Expected equal symbol in let statement.".into());
+            let Some(equal_token) = tokens.get(*current_token) else {
+                errors.push(ParseError { lines: (line_start, variable_end), error: "Expected equal symbol in let statement.".into() });
+                panic_forward(tokens, current_token);
+                return None;
+            };
+            if equal_token.token_type != TokenType::Equal {
+                errors.push(ParseError {
+                    lines: (line_start, equal_token.lines.1),
+                    error: "Expected equal symbol in let statement.".into(),
+                });
+                panic_forward(tokens, current_token);
                 return None;
             };
             *current_token += 1;
 
             let Some(expression) = parse_expression(tokens, current_token, errors, variables) else {
-                // TODO: Instead of immediately returning, panic to the next possible start.
+                panic_forward(tokens, current_token);
                 return None;
             };
 
-            if tokens.get(*current_token).map(|token| &token.token_type)
-                != Some(&TokenType::Semicolon)
+            let semicolon_line = if let Some((&TokenType::Semicolon, token)) = tokens
+                .get(*current_token)
+                .map(|token| (&token.token_type, token))
             {
-                errors.push("Expected semicolon after statement.".into());
+                token.lines.1
+            } else {
+                errors.push(ParseError {
+                    lines: (line_start, expression.lines.1),
+                    error: "Expected semicolon after let statement.".into(),
+                });
+                panic_forward(tokens, current_token);
                 return None;
-            }
+            };
             *current_token += 1;
 
             if let Some(variable_type) = variable_type {
                 if variable_type != expression.value_type {
-                    errors.push(
-                        format!(
+                    errors.push(ParseError {
+                        lines: (line_start, expression.lines.1),
+                        error: format!(
                             "Can't assign {:?} to {variable_type:?}.",
                             expression.value_type
-                        )
-                        .into(),
-                    );
+                        ),
+                    });
                     return None;
                 }
             }
 
             set_type(&variable, expression.value_type.clone(), variables);
-            Some(Statement::VariableDeclaration {
-                variable,
-                value: expression,
+            Some(Statement {
+                statement: StatementType::VariableDeclaration {
+                    variable,
+                    value: expression,
+                },
+                lines: (line_start, semicolon_line),
             })
         }
-        TokenType::LeftBrace => parse_block_statement(tokens, current_token, errors, variables),
-        TokenType::If => {
+        Some((TokenType::LeftBrace, _)) => {
+            parse_block_statement(tokens, current_token, errors, variables)
+        }
+        Some((TokenType::If, token)) => {
+            let if_line = token.lines.0;
             *current_token += 1;
 
             let Some(expression) = parse_expression(tokens, current_token, errors, variables) else {
-                errors.push("Expected expression after if.".into());
+                errors.push(ParseError { lines: (if_line, if_line), error: "Expected condition after if.".into() });
+                panic_forward(tokens, current_token);
                 return None;
             };
 
-            let Some(then_statement) = parse_block_statement(tokens, current_token, errors, variables).map(|statement| statement.into()) else {
-                errors.push("Expected statement after expression.".into());
+            let Some(then_statement): Option<Box<Statement>> = parse_block_statement(tokens, current_token, errors, variables).map(|statement| statement.into()) else {
+                errors.push(ParseError { lines: (if_line, expression.lines.1), error: "Expected then block after condition.".into() });
                 return None;
             };
 
-            let else_statement = if tokens.get(*current_token).map(|token| &token.token_type)
-                == Some(&TokenType::Else)
+            let (else_statement, end_line) = if let Some((&TokenType::Else, else_token)) = tokens
+                .get(*current_token)
+                .map(|token| (&token.token_type, token))
             {
                 *current_token += 1;
                 let Some(else_statement) = parse_block_statement(tokens, current_token, errors, variables) else {
-                    errors.push("Expected statement after expression.".into());
+                    errors.push(ParseError { lines: (if_line, else_token.lines.1), error: "Expected else block after else.".into() });
                     return None;
                 };
-                Some(else_statement.into())
+                let end_line = else_statement.lines.1;
+                (Some(else_statement.into()), end_line)
             } else {
-                None
+                (None, then_statement.lines.1)
             };
 
             if expression.value_type != Type::Boolean {
-                errors.push("Expected boolean expression.".into());
+                errors.push(ParseError {
+                    lines: (if_line, expression.lines.1),
+                    error: "Expected boolean condition.".into(),
+                });
                 return None;
             }
 
-            Some(Statement::If {
-                expression,
-                then_statement,
-                else_statement,
+            Some(Statement {
+                statement: StatementType::If {
+                    expression,
+                    then_statement,
+                    else_statement,
+                },
+                lines: (if_line, end_line),
             })
         }
-        TokenType::While => {
+        Some((TokenType::While, token)) => {
+            let while_start = token.lines.0;
             *current_token += 1;
 
             let Some(expression) = parse_expression(tokens, current_token, errors, variables) else {
-                errors.push("Expected expression after while.".into());
+                errors.push(ParseError { lines: (while_start, while_start), error: "Expected expression after while.".into() });
+                panic_forward(tokens, current_token);
                 return None;
             };
 
             let Some(statement) = parse_block_statement(tokens, current_token, errors, variables).map(|statement| statement.into()) else {
-                errors.push("Expected block statement for while.".into());
+                errors.push(ParseError { lines: (while_start, expression.lines.1), error: "Expected block statement for while.".into() });
                 return None;
             };
 
             if expression.value_type != Type::Boolean {
-                errors.push("Expected boolean expression in while.".into());
+                errors.push(ParseError {
+                    lines: (while_start, expression.lines.1),
+                    error: "Expected boolean expression for while condition.".into(),
+                });
                 return None;
             }
 
-            Some(Statement::While {
-                expression,
-                statement,
+            Some(Statement {
+                lines: (while_start, expression.lines.1),
+                statement: StatementType::While {
+                    expression,
+                    statement,
+                },
             })
         }
         _ => {
+            let initial_position = *current_token;
             let Some(expression) = parse_expression(tokens, current_token, errors, variables) else {
-                // TODO: Instead of immediately returning, panic to the next possible start.
+                if initial_position == *current_token {
+                    // Make sure we keep progressing forward.
+                    *current_token += 1;
+                }
+                panic_forward(tokens, current_token);
                 return None;
             };
-            if tokens.get(*current_token).map(|token| &token.token_type)
-                != Some(&TokenType::Semicolon)
+            let semicolon_line = if let Some((&TokenType::Semicolon, token)) = tokens
+                .get(*current_token)
+                .map(|token| (&token.token_type, token))
             {
-                errors.push("Expected semicolon after statement.".into());
+                token.lines.1
+            } else {
+                errors.push(ParseError {
+                    lines: expression.lines,
+                    error: "Expected semicolon at the end of the statement.".into(),
+                });
+                panic_forward(tokens, current_token);
                 return None;
-            }
+            };
             *current_token += 1;
-            Some(Statement::Expression(expression))
+            Some(Statement {
+                lines: (expression.lines.0, semicolon_line),
+                statement: StatementType::Expression(expression),
+            })
         }
     }
 }
@@ -473,22 +676,26 @@ pub fn parse_statement(
 fn parse_type(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
 ) -> Option<Type> {
-    match tokens.get(*current_token).map(|token| &token.token_type) {
-        Some(TokenType::Number) => {
+    match tokens
+        .get(*current_token)
+        .map(|token| (&token.token_type, token))
+    {
+        Some((TokenType::Number, _)) => {
             *current_token += 1;
             Some(Type::Number)
         }
-        Some(TokenType::String) => {
+        Some((TokenType::String, _)) => {
             *current_token += 1;
             Some(Type::String)
         }
-        Some(TokenType::Bool) => {
+        Some((TokenType::Bool, _)) => {
             *current_token += 1;
             Some(Type::Boolean)
         }
-        Some(TokenType::LeftParenthesis) => {
+        Some((TokenType::LeftParenthesis, token)) => {
+            let start_line = token.lines.0;
             *current_token += 1;
 
             let mut types = vec![];
@@ -496,27 +703,47 @@ fn parse_type(
                 let tuple_type = parse_type(tokens, current_token, errors)?;
                 types.push(tuple_type);
 
-                match tokens.get(*current_token).map(|token| &token.token_type) {
-                    Some(TokenType::RightParenthesis) => {
+                match tokens
+                    .get(*current_token)
+                    .map(|token| (&token.token_type, token))
+                {
+                    Some((TokenType::RightParenthesis, token)) => {
                         *current_token += 1;
                         if types.len() == 1 {
-                            errors.push("Tuple type must have at least two elements.".into());
+                            errors.push(ParseError {
+                                lines: (start_line, token.lines.1),
+                                error: "Tuple type must have at least two elements.".into(),
+                            });
                             return None;
                         }
                         return Some(Type::Tuple(types));
                     }
-                    Some(TokenType::Comma) => {
+                    Some((TokenType::Comma, _)) => {
                         *current_token += 1;
                     }
                     _ => {
-                        errors.push("Can't parse type.".into());
+                        errors.push(ParseError {
+                            lines: (start_line, token.lines.1),
+                            error: "Invalid type.".into(),
+                        });
                         return None;
                     }
                 }
             }
         }
+        Some((_, token)) => {
+            errors.push(ParseError {
+                lines: (token.lines.1, token.lines.1),
+                error: "Invalid type.".into(),
+            });
+            None
+        }
         _ => {
-            errors.push("Can't parse type.".into());
+            // TODO: Fix the lines shown.
+            errors.push(ParseError {
+                lines: (1, 1),
+                error: "EOF while parsing type".into(),
+            });
             None
         }
     }
@@ -529,7 +756,7 @@ fn parse_type(
 fn parse_expression(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Expression> {
     parse_assignment(tokens, current_token, errors, variables)
@@ -538,7 +765,7 @@ fn parse_expression(
 fn parse_assignment(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Expression> {
     let Some(left_expression) = parse_or(tokens, current_token, errors, variables) else {
@@ -557,23 +784,26 @@ fn parse_assignment(
     match left_expression.expression_type {
         ExpressionType::Variable(_) | ExpressionType::TupleAccess { .. } => {}
         _ => {
-            errors.push("Can only assign to variable or tuple elements.".into());
+            errors.push(ParseError {
+                lines: (left_expression.lines.0, right_expression.lines.1),
+                error: "Can only assign to variable or tuple elements.".into(),
+            });
             return None;
         }
     }
 
-    let value_type = match BinaryOperation::Assignment
-        .value_type(&left_expression.value_type, &right_expression.value_type)
-    {
-        Ok(value_type) => value_type,
-        Err(err) => {
-            errors.push(err);
-            return None;
-        }
-    };
+    let value_type =
+        match BinaryOperation::Assignment.value_type(&left_expression, &right_expression) {
+            Ok(value_type) => value_type,
+            Err(err) => {
+                errors.push(err);
+                return None;
+            }
+        };
 
     Some(Expression {
         value_type: value_type.clone(),
+        lines: (left_expression.lines.0, right_expression.lines.1),
         expression_type: ExpressionType::Binary {
             operation: BinaryOperation::Assignment,
             left_expression: left_expression.into(),
@@ -585,7 +815,7 @@ fn parse_assignment(
 fn parse_or(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Expression> {
     let Some(mut expression) = parse_and(tokens, current_token, errors, variables) else {
@@ -604,17 +834,17 @@ fn parse_or(
             return None;
         };
 
-        let value_type =
-            match operation.value_type(&expression.value_type, &right_expression.value_type) {
-                Ok(value_type) => value_type,
-                Err(err) => {
-                    errors.push(err);
-                    return None;
-                }
-            };
+        let value_type = match operation.value_type(&expression, &right_expression) {
+            Ok(value_type) => value_type,
+            Err(err) => {
+                errors.push(err);
+                return None;
+            }
+        };
 
         expression = Expression {
             value_type,
+            lines: (expression.lines.0, right_expression.lines.1),
             expression_type: ExpressionType::Binary {
                 operation,
                 left_expression: expression.into(),
@@ -627,7 +857,7 @@ fn parse_or(
 fn parse_and(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Expression> {
     let Some(mut expression) = parse_comparison(tokens, current_token, errors, variables) else {
@@ -646,17 +876,17 @@ fn parse_and(
             return None;
         };
 
-        let value_type =
-            match operation.value_type(&expression.value_type, &right_expression.value_type) {
-                Ok(value_type) => value_type,
-                Err(err) => {
-                    errors.push(err);
-                    return None;
-                }
-            };
+        let value_type = match operation.value_type(&expression, &right_expression) {
+            Ok(value_type) => value_type,
+            Err(err) => {
+                errors.push(err);
+                return None;
+            }
+        };
 
         expression = Expression {
             value_type,
+            lines: (expression.lines.0, right_expression.lines.1),
             expression_type: ExpressionType::Binary {
                 operation,
                 left_expression: expression.into(),
@@ -669,7 +899,7 @@ fn parse_and(
 fn parse_comparison(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Expression> {
     let Some(mut expression) = parse_term(tokens, current_token, errors, variables) else {
@@ -693,17 +923,17 @@ fn parse_comparison(
             return None;
         };
 
-        let value_type =
-            match operation.value_type(&expression.value_type, &right_expression.value_type) {
-                Ok(value_type) => value_type,
-                Err(err) => {
-                    errors.push(err);
-                    return None;
-                }
-            };
+        let value_type = match operation.value_type(&expression, &right_expression) {
+            Ok(value_type) => value_type,
+            Err(err) => {
+                errors.push(err);
+                return None;
+            }
+        };
 
         expression = Expression {
             value_type,
+            lines: (expression.lines.0, right_expression.lines.1),
             expression_type: ExpressionType::Binary {
                 operation,
                 left_expression: expression.into(),
@@ -716,7 +946,7 @@ fn parse_comparison(
 fn parse_term(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Expression> {
     let Some(mut expression) = parse_factor(tokens, current_token, errors, variables) else {
@@ -736,17 +966,17 @@ fn parse_term(
             return None;
         };
 
-        let value_type =
-            match operation.value_type(&expression.value_type, &right_expression.value_type) {
-                Ok(value_type) => value_type,
-                Err(err) => {
-                    errors.push(err);
-                    return None;
-                }
-            };
+        let value_type = match operation.value_type(&expression, &right_expression) {
+            Ok(value_type) => value_type,
+            Err(err) => {
+                errors.push(err);
+                return None;
+            }
+        };
 
         expression = Expression {
             value_type,
+            lines: (expression.lines.0, right_expression.lines.1),
             expression_type: ExpressionType::Binary {
                 operation,
                 left_expression: expression.into(),
@@ -759,7 +989,7 @@ fn parse_term(
 fn parse_factor(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Expression> {
     let Some(mut expression) = parse_unary(tokens, current_token, errors, variables) else {
@@ -779,17 +1009,17 @@ fn parse_factor(
             return None;
         };
 
-        let value_type =
-            match operation.value_type(&expression.value_type, &right_expression.value_type) {
-                Ok(value_type) => value_type,
-                Err(err) => {
-                    errors.push(err);
-                    return None;
-                }
-            };
+        let value_type = match operation.value_type(&expression, &right_expression) {
+            Ok(value_type) => value_type,
+            Err(err) => {
+                errors.push(err);
+                return None;
+            }
+        };
 
         expression = Expression {
             value_type,
+            lines: (expression.lines.0, right_expression.lines.1),
             expression_type: ExpressionType::Binary {
                 operation,
                 left_expression: expression.into(),
@@ -802,12 +1032,13 @@ fn parse_factor(
 fn parse_unary(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Expression> {
-    let operation = match tokens.get(*current_token).map(|token| &token.token_type) {
-        Some(TokenType::Minus) => UnaryOperation::Minus,
-        Some(TokenType::Exclamation) => UnaryOperation::Not,
+    let operation_token = tokens.get(*current_token);
+    let (operation, start_line) = match operation_token.map(|token| (&token.token_type, token)) {
+        Some((TokenType::Minus, token)) => (UnaryOperation::Minus, token.lines.0),
+        Some((TokenType::Exclamation, token)) => (UnaryOperation::Not, token.lines.0),
         _ => return parse_tuple_access(tokens, current_token, errors, variables),
     };
 
@@ -817,7 +1048,7 @@ fn parse_unary(
         return None;
     };
 
-    let value_type = match operation.value_type(&expression.value_type) {
+    let value_type = match operation.value_type(&expression) {
         Ok(value_type) => value_type,
         Err(err) => {
             errors.push(err);
@@ -827,6 +1058,7 @@ fn parse_unary(
 
     Some(Expression {
         value_type,
+        lines: (start_line, expression.lines.1),
         expression_type: ExpressionType::Unary {
             operation,
             expression: expression.into(),
@@ -837,7 +1069,7 @@ fn parse_unary(
 fn parse_tuple_access(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Expression> {
     let Some(mut expression) = parse_primary(tokens, current_token, errors, variables) else {
@@ -845,25 +1077,41 @@ fn parse_tuple_access(
     };
 
     loop {
-        if tokens.get(*current_token).map(|token| &token.token_type) != Some(&TokenType::Dot) {
-            return Some(expression);
-        }
-
-        *current_token += 1;
-
-        *current_token += 1;
-        let index = if let Some(TokenType::Literal(Value::Number(number))) = tokens
-            .get(*current_token - 1)
-            .map(|token| &token.token_type)
+        let dot_line = if let Some((&TokenType::Dot, token)) = tokens
+            .get(*current_token)
+            .map(|token| (&token.token_type, token))
         {
-            if number.floor() != *number {
-                errors.push("Expected nonnegative integer index.".into());
+            token.lines.1
+        } else {
+            return Some(expression);
+        };
+
+        *current_token += 1;
+
+        *current_token += 1;
+        let (index, end_line) = if let Some(token) = tokens.get(*current_token - 1) {
+            if let TokenType::Literal(Value::Number(number)) = token.token_type {
+                if number.floor() != number {
+                    errors.push(ParseError {
+                        lines: (expression.lines.0, token.lines.1),
+                        error: "Expected nonnegative integer index.".into(),
+                    });
+                    return None;
+                }
+
+                (number.floor() as usize, token.lines.1) // TODO: Consider overflow
+            } else {
+                errors.push(ParseError {
+                    lines: (expression.lines.0, token.lines.1),
+                    error: "Expected index after dot.".into(),
+                });
                 return None;
             }
-
-            number.floor() as usize // TODO: Consider overflow
         } else {
-            errors.push("Expected index after dot.".into());
+            errors.push(ParseError {
+                lines: (expression.lines.0, dot_line),
+                error: "Expected index after dot.".into(),
+            });
             return None;
         };
 
@@ -871,16 +1119,23 @@ fn parse_tuple_access(
             if index < types.len() {
                 types[index].clone()
             } else {
-                errors.push("Index too large".into());
+                errors.push(ParseError {
+                    lines: (expression.lines.0, end_line),
+                    error: "Index too large".into(),
+                });
                 return None;
             }
         } else {
-            errors.push("Tuple required for tuple access.".into());
+            errors.push(ParseError {
+                lines: (expression.lines.0, end_line),
+                error: "Tuple required for tuple access.".into(),
+            });
             return None;
         };
 
         expression = Expression {
             value_type,
+            lines: (expression.lines.0, end_line),
             expression_type: ExpressionType::TupleAccess {
                 expression: expression.into(),
                 index,
@@ -892,12 +1147,16 @@ fn parse_tuple_access(
 fn parse_primary(
     tokens: &Vec<Token>,
     current_token: &mut usize,
-    errors: &mut Vec<Box<dyn Error>>,
+    errors: &mut Vec<ParseError>,
     variables: &mut Vec<HashMap<String, Type>>,
 ) -> Option<Expression> {
     match tokens.get(*current_token) {
         None => {
-            errors.push("No tokens available to parse".into());
+            // TODO: Fix the lines
+            errors.push(ParseError {
+                lines: (1, 1),
+                error: "No tokens available to parse (EOF)".into(),
+            });
             None
         }
         Some(token) => match &token.token_type {
@@ -907,32 +1166,36 @@ fn parse_primary(
                 Some(Expression {
                     value_type,
                     expression_type: ExpressionType::Literal(value.clone()),
+                    lines: token.lines,
                 })
             }
             TokenType::Variable(variable) => {
                 *current_token += 1;
                 let Some(value_type) = get_type(variable, variables) else {
-                    errors.push(format!("No variable called {variable} exists.").into());
+                    errors.push(ParseError { lines: token.lines, error: format!("No variable called {variable} exists.") });
                     return None;
                 };
                 Some(Expression {
                     value_type,
                     expression_type: ExpressionType::Variable(variable.clone()),
+                    lines: token.lines,
                 })
             }
             TokenType::LeftParenthesis => {
+                let start_line = token.lines.0;
                 *current_token += 1;
 
                 let Some(expression) = parse_expression(tokens, current_token, errors, variables) else { return None };
 
-                if tokens.get(*current_token).map(|token| &token.token_type)
-                    == Some(&TokenType::RightParenthesis)
-                {
-                    *current_token += 1;
-                    return Some(Expression {
-                        value_type: expression.value_type.clone(),
-                        expression_type: ExpressionType::Grouping(expression.into()),
-                    });
+                if let Some(token) = tokens.get(*current_token) {
+                    if token.token_type == TokenType::RightParenthesis {
+                        *current_token += 1;
+                        return Some(Expression {
+                            value_type: expression.value_type.clone(),
+                            expression_type: ExpressionType::Grouping(expression.into()),
+                            lines: (start_line, token.lines.1),
+                        });
+                    }
                 }
 
                 let mut expressions = vec![expression];
@@ -940,12 +1203,19 @@ fn parse_primary(
                     if tokens.get(*current_token).map(|token| &token.token_type)
                         != Some(&TokenType::Comma)
                     {
-                        errors.push("Expected , in tuple.".into());
+                        errors.push(ParseError {
+                            lines: (
+                                expressions.first().unwrap().lines.0,
+                                expressions.last().unwrap().lines.1,
+                            ),
+                            error: "Expected , in tuple.".into(),
+                        });
                         return None;
                     }
                     *current_token += 1;
 
                     let Some(expression) = parse_expression(tokens, current_token, errors, variables) else { return None };
+                    let expression_end = expression.lines.1;
                     expressions.push(expression);
 
                     if tokens.get(*current_token).map(|token| &token.token_type)
@@ -960,12 +1230,16 @@ fn parse_primary(
                                     .collect(),
                             ),
                             expression_type: ExpressionType::Tuple(expressions),
+                            lines: (start_line, expression_end),
                         });
                     }
                 }
             }
             _ => {
-                errors.push("No tokens available to parse".into());
+                errors.push(ParseError {
+                    lines: token.lines,
+                    error: format!("Expected primary expression, got {:?} instead.", token.token_type),
+                });
                 None
             }
         },

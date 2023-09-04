@@ -50,7 +50,7 @@ impl Value {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
     Plus,
     Minus,
@@ -87,7 +87,7 @@ pub enum TokenType {
 
 #[derive(Debug)]
 pub struct Token {
-    pub line: usize,
+    pub lines: (usize, usize),
     pub token_type: TokenType,
 }
 
@@ -103,84 +103,94 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
             ' ' | '\t' | '\r' => {}
             '\n' => line += 1,
             '+' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::Plus,
             }),
             '-' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::Minus,
             }),
             '*' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::Star,
             }),
             '/' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::Slash,
             }),
             '(' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::LeftParenthesis,
             }),
             ')' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::RightParenthesis,
             }),
             '{' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::LeftBrace,
             }),
             '}' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::RightBrace,
             }),
             ':' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::Colon,
             }),
             ';' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::Semicolon,
             }),
             ',' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::Comma,
             }),
             '.' => tokens.push(Token {
-                line,
+                lines: (line, line),
                 token_type: TokenType::Dot,
             }),
             '&' => match chars.peek() {
                 Some('&') => {
                     tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::DoubleAnd,
                     });
                     chars.next();
                 }
-                _ => errors.push(format!("Invalid token {ch} at line {line}.").into()),
+                _ => errors.push(
+                    format!(
+                        "Tokenizer error: Invalid token {ch} at line {line}. (Did you mean && ?)"
+                    )
+                    .into(),
+                ),
             },
             '|' => match chars.peek() {
                 Some('|') => {
                     tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::DoubleOr,
                     });
                     chars.next();
                 }
-                _ => errors.push(format!("Invalid token {ch} at line {line}.").into()),
+                _ => errors.push(
+                    format!(
+                        "Tokenizer error: Invalid token {ch} at line {line}. (Did you mean || ?)"
+                    )
+                    .into(),
+                ),
             },
             '=' => match chars.peek() {
                 Some('=') => {
                     tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::DoubleEqual,
                     });
                     chars.next();
                 }
                 _ => {
                     tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::Equal,
                     });
                 }
@@ -188,14 +198,14 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
             '!' => match chars.peek() {
                 Some('=') => {
                     tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::ExclamationEqual,
                     });
                     chars.next();
                 }
                 _ => {
                     tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::Exclamation,
                     });
                 }
@@ -203,14 +213,14 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
             '<' => match chars.peek() {
                 Some('=') => {
                     tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::LessEqual,
                     });
                     chars.next();
                 }
                 _ => {
                     tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::Less,
                     });
                 }
@@ -218,26 +228,29 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
             '>' => match chars.peek() {
                 Some('=') => {
                     tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::GreaterEqual,
                     });
                     chars.next();
                 }
                 _ => {
                     tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::Greater,
                     });
                 }
             },
             '"' => {
                 let mut string = String::new();
-                let string_line = line;
+                let start_line = line;
                 loop {
                     match chars.peek() {
                         None => {
                             errors.push(
-                                format!("\" at line {line} doesn't have a closing \".").into(),
+                                format!(
+                                    "Tokenizer error: \" at line {line} doesn't have a closing \"."
+                                )
+                                .into(),
                             );
                             break;
                         }
@@ -246,7 +259,7 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
                             match ch {
                                 '"' => {
                                     tokens.push(Token {
-                                        line: string_line,
+                                        lines: (start_line, line),
                                         token_type: TokenType::Literal(Value::String(string)),
                                     });
                                     break;
@@ -301,7 +314,7 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
 
                 // Parse the number.
                 tokens.push(Token {
-                    line,
+                    lines: (line, line),
                     token_type: TokenType::Literal(Value::Number(number.parse().unwrap())),
                 });
             }
@@ -320,51 +333,51 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
                 match word.as_str() {
                     "true" => {
                         tokens.push(Token {
-                            line,
+                            lines: (line, line),
                             token_type: TokenType::Literal(Value::Boolean(true)),
                         });
                     }
                     "false" => {
                         tokens.push(Token {
-                            line,
+                            lines: (line, line),
                             token_type: TokenType::Literal(Value::Boolean(false)),
                         });
                     }
                     "let" => tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::Let,
                     }),
                     "if" => tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::If,
                     }),
                     "else" => tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::Else,
                     }),
                     "while" => tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::While,
                     }),
                     "number" => tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::Number,
                     }),
                     "string" => tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::String,
                     }),
                     "bool" => tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::Bool,
                     }),
                     _ => tokens.push(Token {
-                        line,
+                        lines: (line, line),
                         token_type: TokenType::Variable(word),
                     }),
                 }
             }
-            _ => errors.push(format!("Invalid token {ch} at line {line}.").into()),
+            _ => errors.push(format!("Tokenizer error: Invalid token {ch} at line {line}.").into()),
         }
     }
 

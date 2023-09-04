@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    parser::{BinaryOperation, Expression, ExpressionType, Statement, UnaryOperation},
+    parser::{
+        BinaryOperation, Expression, ExpressionType, Statement, StatementType, UnaryOperation,
+    },
     tokenizer::Value,
 };
 
@@ -65,22 +67,22 @@ pub fn interpret(statements: &Vec<Statement>, global_variables: &mut HashMap<Str
 }
 
 fn interpret_statement(statement: &Statement, variables: &mut Variables) {
-    match statement {
-        Statement::Expression(expression) => {
+    match &statement.statement {
+        StatementType::Expression(expression) => {
             println!("{}", interpret_expression(expression, variables));
         }
-        Statement::VariableDeclaration { variable, value } => {
+        StatementType::VariableDeclaration { variable, value } => {
             let value = interpret_expression(value, variables);
             variables.create_variable(variable, value);
         }
-        Statement::Block(statements) => {
+        StatementType::Block(statements) => {
             variables.push_environment();
             for statement in statements {
                 interpret_statement(statement, variables);
             }
             variables.pop_environment();
         }
-        Statement::If {
+        StatementType::If {
             expression,
             then_statement,
             else_statement,
@@ -95,7 +97,7 @@ fn interpret_statement(statement: &Statement, variables: &mut Variables) {
                 interpret_statement(else_statement, variables);
             }
         }
-        Statement::While {
+        StatementType::While {
             expression,
             statement,
         } => loop {

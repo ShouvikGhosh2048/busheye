@@ -28,8 +28,23 @@ fn run(program: &str, global_variables: &mut HashMap<String, Value>) {
     let statements = match parser::parse(&tokens, &global_types) {
         Ok(statements) => statements,
         Err(errors) => {
+            let lines = program.lines().collect::<Vec<_>>();
             for error in errors {
-                println!("{error}");
+                let index_width = error.lines.1.ilog10() + 1;
+                for (line_index, line) in lines
+                    .iter()
+                    .enumerate()
+                    .take(error.lines.1)
+                    .skip(error.lines.0 - 1)
+                {
+                    print!("{}", line_index + 1);
+                    for _ in 0..(index_width - (line_index + 1).ilog10()) {
+                        print!(" ");
+                    }
+                    println!("| {}", line);
+                }
+                println!("{}", error.error);
+                println!();
             }
             return;
         }
