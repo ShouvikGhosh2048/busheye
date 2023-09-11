@@ -1,6 +1,7 @@
 mod interpreter;
 mod parser;
 mod tokenizer;
+mod variable_and_type_check;
 
 use std::{
     collections::HashMap,
@@ -9,6 +10,7 @@ use std::{
 };
 
 use tokenizer::Value;
+use variable_and_type_check::check_types;
 
 fn run(program: &str, global_variables: &mut HashMap<String, Value>) {
     let tokens = match tokenizer::tokenize(program) {
@@ -25,7 +27,7 @@ fn run(program: &str, global_variables: &mut HashMap<String, Value>) {
     for (variable, value) in global_variables.iter() {
         global_types.insert(variable.clone(), value.value_type());
     }
-    let statements = match parser::parse(&tokens, &global_types) {
+    let statements = match parser::parse(&tokens) {
         Ok(statements) => statements,
         Err(errors) => {
             let lines = program.lines().collect::<Vec<_>>();
@@ -49,6 +51,28 @@ fn run(program: &str, global_variables: &mut HashMap<String, Value>) {
             return;
         }
     };
+
+    if let Err(errors) = check_types(&statements, &global_types) {
+        let lines = program.lines().collect::<Vec<_>>();
+        for error in errors {
+            let index_width = error.lines.1.ilog10() + 1;
+            for (line_index, line) in lines
+                .iter()
+                .enumerate()
+                .take(error.lines.1)
+                .skip(error.lines.0 - 1)
+            {
+                print!("{}", line_index + 1);
+                for _ in 0..(index_width - (line_index + 1).ilog10()) {
+                    print!(" ");
+                }
+                println!("| {}", line);
+            }
+            println!("{}", error.error);
+            println!();
+        }
+        return;
+    }
 
     interpreter::interpret(&statements, global_variables);
 }

@@ -71,7 +71,9 @@ fn interpret_statement(statement: &Statement, variables: &mut Variables) {
         StatementType::Expression(expression) => {
             println!("{}", interpret_expression(expression, variables));
         }
-        StatementType::VariableDeclaration { variable, value } => {
+        StatementType::VariableDeclaration {
+            variable, value, ..
+        } => {
             let value = interpret_expression(value, variables);
             variables.create_variable(variable, value);
         }
