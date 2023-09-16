@@ -4,85 +4,148 @@ use crate::{
     parser::{
         BinaryOperation, Expression, ExpressionType, Statement, StatementType, UnaryOperation,
     },
-    tokenizer::Value,
+    tokenizer::{FunctionBody, Value},
 };
 
-struct Variables<'a> {
-    global_variables: &'a mut HashMap<String, Value>,
-    environments: Vec<HashMap<String, Value>>,
+pub struct Environment {
+    parent: Option<usize>,
+    pub variables: HashMap<(String, usize), Value>,
 }
 
-impl<'a> Variables<'a> {
+pub struct Variables {
+    current_environment: usize,
+    pub environments: HashMap<usize, Environment>,
+    last_id: usize,
+}
+
+impl Variables {
+    pub fn new() -> Variables {
+        let mut environments = HashMap::new();
+        environments.insert(
+            0,
+            Environment {
+                parent: None,
+                variables: HashMap::new(),
+            },
+        );
+        Variables {
+            current_environment: 0,
+            environments,
+            last_id: 0,
+        }
+    }
+
     fn push_environment(&mut self) {
-        self.environments.push(HashMap::new());
+        self.environments.insert(
+            self.last_id + 1,
+            Environment {
+                parent: Some(self.current_environment),
+                variables: HashMap::new(),
+            },
+        );
+        self.current_environment = self.last_id + 1;
+        self.last_id += 1;
     }
 
     fn pop_environment(&mut self) {
-        self.environments.pop();
+        self.current_environment = self.environments[&self.current_environment].parent.unwrap();
     }
 
-    fn get_variable(&self, variable: &String) -> Option<Value> {
-        for environment in self.environments.iter().rev() {
-            if let Some(value) = environment.get(variable) {
-                return Some(value.clone());
+    fn get_variable(
+        &self,
+        variable: &str,
+        shadow_id: usize,
+        parent_height: usize,
+    ) -> Option<Value> {
+        let mut current_environment = self.current_environment;
+        for _ in 0..parent_height {
+            if let Some(environment) = self.environments[&current_environment].parent {
+                current_environment = environment;
+            } else {
+                return None;
             }
         }
-        self.global_variables.get(variable).cloned()
+
+        self.environments[&current_environment]
+            .variables
+            .get(&(variable.to_owned(), shadow_id))
+            .cloned()
     }
 
     /// Sets a variable. Doesn't create a new one.
-    fn set_variable(&mut self, variable: &String, value: Value) -> Result<(), ()> {
-        for environment in self.environments.iter_mut().rev() {
-            if environment.contains_key(variable) {
-                environment.insert(variable.clone(), value);
-                return Ok(());
+    fn set_variable(
+        &mut self,
+        variable: &str,
+        shadow_id: usize,
+        parent_height: usize,
+        value: Value,
+    ) -> Result<(), ()> {
+        let mut current_environment = self.current_environment;
+        for _ in 0..parent_height {
+            if let Some(environment) = self.environments[&current_environment].parent {
+                current_environment = environment;
+            } else {
+                return Err(());
             }
         }
 
-        if self.global_variables.contains_key(variable) {
-            self.global_variables.insert(variable.clone(), value);
+        if self.environments[&current_environment]
+            .variables
+            .contains_key(&(variable.to_owned(), shadow_id))
+        {
+            self.environments
+                .get_mut(&current_environment)
+                .unwrap()
+                .variables
+                .insert((variable.to_owned(), shadow_id), value);
             Ok(())
         } else {
             Err(())
         }
     }
 
-    fn create_variable(&mut self, variable: &str, value: Value) {
-        if let Some(environment) = self.environments.last_mut() {
-            environment.insert(variable.to_owned(), value);
-        } else {
-            self.global_variables.insert(variable.to_owned(), value);
-        }
+    fn create_variable(&mut self, variable: &str, shadow_id: usize, value: Value) {
+        self.environments
+            .get_mut(&self.current_environment)
+            .unwrap()
+            .variables
+            .insert((variable.to_owned(), shadow_id), value);
     }
 }
 
-pub fn interpret(statements: &Vec<Statement>, global_variables: &mut HashMap<String, Value>) {
-    let mut variables = Variables {
-        global_variables,
-        environments: vec![],
-    };
+pub fn interpret(statements: &Vec<Statement>, variables: &mut Variables) {
     for statement in statements {
-        interpret_statement(statement, &mut variables);
+        interpret_statement(statement, variables);
     }
 }
 
-fn interpret_statement(statement: &Statement, variables: &mut Variables) {
+fn interpret_statement(statement: &Statement, variables: &mut Variables) -> Option<Value> {
+    // Return value
     match &statement.statement {
         StatementType::Expression(expression) => {
-            println!("{}", interpret_expression(expression, variables));
+            interpret_expression(expression, variables);
+            None
         }
         StatementType::VariableDeclaration {
-            variable, value, ..
+            variable,
+            value,
+            shadow_id,
+            ..
         } => {
             let value = interpret_expression(value, variables);
-            variables.create_variable(variable, value);
+            variables.create_variable(variable, shadow_id.unwrap(), value);
+            None
         }
         StatementType::Block(statements) => {
             variables.push_environment();
             for statement in statements {
-                interpret_statement(statement, variables);
+                if let Some(value) = interpret_statement(statement, variables) {
+                    variables.pop_environment();
+                    return Some(value);
+                }
             }
             variables.pop_environment();
+            None
         }
         StatementType::If {
             expression,
@@ -94,10 +157,16 @@ fn interpret_statement(statement: &Statement, variables: &mut Variables) {
             };
 
             if value {
-                interpret_statement(then_statement, variables);
+                if let Some(value) = interpret_statement(then_statement, variables) {
+                    return Some(value);
+                }
             } else if let Some(else_statement) = else_statement {
-                interpret_statement(else_statement, variables);
+                if let Some(value) = interpret_statement(else_statement, variables) {
+                    return Some(value);
+                }
             }
+
+            None
         }
         StatementType::While {
             expression,
@@ -108,11 +177,39 @@ fn interpret_statement(statement: &Statement, variables: &mut Variables) {
                 };
 
             if run_loop {
-                interpret_statement(statement, variables);
+                if let Some(value) = interpret_statement(statement, variables) {
+                    return Some(value);
+                }
             } else {
-                break;
+                return None;
             }
         },
+        StatementType::FunctionDeclaration {
+            name,
+            parameters,
+            return_type,
+            body,
+            shadow_id,
+        } => {
+            variables.create_variable(
+                name,
+                shadow_id.unwrap(),
+                Value::Function {
+                    parameters: parameters.clone(),
+                    return_type: return_type.clone(),
+                    body: FunctionBody::Statement(body.clone()),
+                    parent_environment: variables.current_environment,
+                },
+            );
+            None
+        }
+        StatementType::Return(expression) => {
+            if let Some(expression) = expression {
+                Some(interpret_expression(expression, variables))
+            } else {
+                Some(Value::Void)
+            }
+        }
     }
 }
 
@@ -188,26 +285,12 @@ fn interpret_expression(expression: &Expression, variables: &mut Variables) -> V
             BinaryOperation::Equal => {
                 let left_value = interpret_expression(left_expression, variables);
                 let right_value = interpret_expression(right_expression, variables);
-                match (left_value, right_value) {
-                    (Value::Number(left), Value::Number(right)) => Value::Boolean(left == right),
-                    (Value::String(left), Value::String(right)) => Value::Boolean(left == right),
-                    (Value::Boolean(left), Value::Boolean(right)) => Value::Boolean(left == right),
-                    _ => {
-                        unreachable!()
-                    }
-                }
+                Value::Boolean(left_value == right_value)
             }
             BinaryOperation::NotEqual => {
                 let left_value = interpret_expression(left_expression, variables);
                 let right_value = interpret_expression(right_expression, variables);
-                match (left_value, right_value) {
-                    (Value::Number(left), Value::Number(right)) => Value::Boolean(left != right),
-                    (Value::String(left), Value::String(right)) => Value::Boolean(left != right),
-                    (Value::Boolean(left), Value::Boolean(right)) => Value::Boolean(left != right),
-                    _ => {
-                        unreachable!()
-                    }
-                }
+                Value::Boolean(left_value != right_value)
             }
             BinaryOperation::Less => {
                 let left_value = interpret_expression(left_expression, variables);
@@ -272,8 +355,19 @@ fn interpret_expression(expression: &Expression, variables: &mut Variables) -> V
             BinaryOperation::Assignment => {
                 let value = interpret_expression(right_expression, variables);
                 match &left_expression.expression_type {
-                    ExpressionType::Variable(variable) => {
-                        variables.set_variable(variable, value.clone()).unwrap();
+                    ExpressionType::Variable {
+                        name,
+                        shadow_id,
+                        parent_height,
+                    } => {
+                        variables
+                            .set_variable(
+                                name,
+                                shadow_id.unwrap(),
+                                parent_height.unwrap(),
+                                value.clone(),
+                            )
+                            .unwrap();
                         value
                     }
                     ExpressionType::TupleAccess { expression, index } => {
@@ -286,16 +380,32 @@ fn interpret_expression(expression: &Expression, variables: &mut Variables) -> V
                                     current_expression = expression;
                                     indices.push(*index);
                                 }
-                                ExpressionType::Variable(variable) => {
-                                    let mut variable_value =
-                                        variables.get_variable(variable).unwrap();
+                                ExpressionType::Variable {
+                                    name,
+                                    shadow_id,
+                                    parent_height,
+                                } => {
+                                    let mut variable_value = variables
+                                        .get_variable(
+                                            name,
+                                            shadow_id.unwrap(),
+                                            parent_height.unwrap(),
+                                        )
+                                        .unwrap();
                                     let mut lvalue = &mut variable_value;
                                     for &index in indices.iter().rev() {
                                         let Value::Tuple(values) = lvalue else { unreachable!() };
                                         lvalue = &mut values[index];
                                     }
                                     *lvalue = value.clone();
-                                    variables.set_variable(variable, variable_value).unwrap();
+                                    variables
+                                        .set_variable(
+                                            name,
+                                            shadow_id.unwrap(),
+                                            parent_height.unwrap(),
+                                            variable_value,
+                                        )
+                                        .unwrap();
                                     break;
                                 }
                                 _ => {
@@ -313,7 +423,13 @@ fn interpret_expression(expression: &Expression, variables: &mut Variables) -> V
                 }
             }
         },
-        ExpressionType::Variable(variable) => variables.get_variable(variable).unwrap(), // TODO: Handle this gracefully.
+        ExpressionType::Variable {
+            name,
+            shadow_id,
+            parent_height,
+        } => variables
+            .get_variable(name, shadow_id.unwrap(), parent_height.unwrap())
+            .unwrap(),
         ExpressionType::Literal(value) => value.clone(),
         ExpressionType::Grouping(expression) => interpret_expression(expression, variables),
         ExpressionType::Tuple(expressions) => Value::Tuple(
@@ -327,6 +443,40 @@ fn interpret_expression(expression: &Expression, variables: &mut Variables) -> V
                 unreachable!()
             };
             values[*index].clone()
+        }
+        ExpressionType::FunctionCall {
+            function,
+            arguments,
+        } => {
+            let Value::Function { parameters, body, parent_environment , ..} = interpret_expression(function, variables) else {
+                unreachable!();
+            };
+
+            let mut argument_values = vec![];
+            for argument in arguments {
+                argument_values.push(interpret_expression(argument, variables));
+            }
+
+            match body {
+                FunctionBody::Statement(statement) => {
+                    let current_environment = variables.current_environment;
+                    variables.current_environment = parent_environment;
+                    variables.push_environment();
+                    for ((parameter, shadow_id), value) in parameters
+                        .into_iter()
+                        .map(|(parameter, shadow_id, _)| (parameter, shadow_id))
+                        .zip(argument_values.into_iter())
+                    {
+                        variables.create_variable(&parameter, shadow_id.unwrap(), value);
+                    }
+                    let return_value =
+                        interpret_statement(&statement, variables).unwrap_or(Value::Void);
+                    variables.pop_environment();
+                    variables.current_environment = current_environment;
+                    return_value
+                }
+                FunctionBody::RustClosure { closure, .. } => closure(argument_values),
+            } // TODO: Handle return types
         }
     }
 }

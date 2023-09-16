@@ -2,6 +2,7 @@ use std::fmt::{Debug, Display};
 
 use crate::tokenizer::{Token, TokenType, Type, Value};
 
+#[derive(PartialEq, Clone, Copy)]
 pub enum UnaryOperation {
     Minus,
     Not,
@@ -20,7 +21,7 @@ impl Debug for UnaryOperation {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum BinaryOperation {
     Add,
     Subtract,
@@ -61,6 +62,7 @@ impl Debug for BinaryOperation {
     }
 }
 
+#[derive(PartialEq, Clone)]
 pub enum ExpressionType {
     Unary {
         operation: UnaryOperation,
@@ -72,15 +74,24 @@ pub enum ExpressionType {
         right_expression: Box<Expression>,
     },
     Literal(Value),
-    Variable(String),
+    Variable {
+        name: String,
+        shadow_id: Option<usize>,
+        parent_height: Option<usize>,
+    },
     Grouping(Box<Expression>),
     Tuple(Vec<Expression>),
     TupleAccess {
         expression: Box<Expression>,
         index: usize,
     },
+    FunctionCall {
+        function: Box<Expression>,
+        arguments: Vec<Expression>,
+    },
 }
 
+#[derive(PartialEq, Clone)]
 pub struct Expression {
     pub expression_type: ExpressionType,
     pub lines: (usize, usize),
@@ -105,16 +116,13 @@ impl Debug for Expression {
                     "{operation:?} ({left_expression:?}) ({right_expression:?})"
                 )
             }
-            ExpressionType::Literal(value) => match value {
-                Value::Number(value) => write!(f, "{value}"),
-                Value::String(value) => write!(f, "{value}"),
-                Value::Boolean(value) => write!(f, "{value}"),
-                Value::Tuple(_) => {
-                    unreachable!("Tuple's are created from tuple expressions.")
-                }
-            },
-            ExpressionType::Variable(variable) => {
-                write!(f, "{variable}")
+            ExpressionType::Literal(value) => write!(f, "{value}"),
+            ExpressionType::Variable {
+                name,
+                shadow_id,
+                parent_height,
+            } => {
+                write!(f, "{name}({shadow_id:?},{parent_height:?})")
             }
             ExpressionType::Grouping(expression) => {
                 write!(f, "({expression:?})")
@@ -136,6 +144,20 @@ impl Debug for Expression {
             }
             ExpressionType::TupleAccess { expression, index } => {
                 write!(f, ". {expression:?} {index}")
+            }
+            ExpressionType::FunctionCall {
+                function,
+                arguments,
+            } => {
+                write!(f, "call {function:?} (")?;
+                let mut arguments = arguments.iter();
+                if let Some(argument) = arguments.next() {
+                    write!(f, "{argument:?}")?;
+                    for argument in arguments {
+                        write!(f, ", {argument:?}")?;
+                    }
+                }
+                write!(f, ")")
             }
         }
     }
@@ -160,6 +182,20 @@ impl Display for Expression {
             ExpressionType::TupleAccess { expression, index } => {
                 write!(f, "{expression}.{index}")
             }
+            ExpressionType::FunctionCall {
+                function,
+                arguments,
+            } => {
+                write!(f, "{function}(")?;
+                let mut arguments = arguments.iter();
+                if let Some(argument) = arguments.next() {
+                    write!(f, "{argument}")?;
+                    for argument in arguments {
+                        write!(f, ", {argument}")?;
+                    }
+                }
+                write!(f, ")")
+            }
             _ => {
                 write!(f, "{self:?}")
             }
@@ -167,13 +203,22 @@ impl Display for Expression {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum StatementType {
     VariableDeclaration {
         variable: String,
         variable_type: Option<Type>,
         value: Expression,
+        shadow_id: Option<usize>,
     },
+    FunctionDeclaration {
+        name: String,
+        parameters: Vec<(String, Option<usize>, Type)>, // Option<usize> is the shadow_id.
+        return_type: Type,
+        body: Box<Statement>,
+        shadow_id: Option<usize>,
+    },
+    Return(Option<Expression>),
     Expression(Expression),
     Block(Vec<Statement>),
     If {
@@ -187,7 +232,7 @@ pub enum StatementType {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Statement {
     pub statement: StatementType,
     pub lines: (usize, usize),
@@ -379,6 +424,7 @@ pub fn parse_statement(
                     variable,
                     variable_type,
                     value: expression,
+                    shadow_id: None,
                 },
                 lines: (line_start, semicolon_line),
             })
@@ -444,6 +490,169 @@ pub fn parse_statement(
                     expression,
                     statement,
                 },
+            })
+        }
+        Some((TokenType::Fn, token)) => {
+            let function_start = token.lines.0;
+            *current_token += 1;
+
+            let name = if let Some(TokenType::Variable(name)) =
+                tokens.get(*current_token).map(|token| &token.token_type)
+            {
+                name
+            } else {
+                errors.push(CompilerError {
+                    lines: (function_start, token.lines.1),
+                    error: "Function name required.".into(),
+                });
+                return None;
+            };
+            *current_token += 1;
+
+            if tokens.get(*current_token).map(|token| &token.token_type)
+                != Some(&TokenType::LeftParenthesis)
+            {
+                errors.push(CompilerError {
+                    lines: (function_start, token.lines.1),
+                    error: "Left parenthesis required after function name.".into(),
+                });
+                return None;
+            }
+            *current_token += 1;
+
+            let mut parameters = vec![];
+            let right_parenthesis_end_line;
+            loop {
+                if let Some((&TokenType::RightParenthesis, token)) = tokens
+                    .get(*current_token)
+                    .map(|token| (&token.token_type, token))
+                {
+                    *current_token += 1;
+                    right_parenthesis_end_line = token.lines.1;
+                    break;
+                }
+
+                let (parameter_name, parameter_name_line_end) =
+                    if let Some((TokenType::Variable(name), token)) = tokens
+                        .get(*current_token)
+                        .map(|token| (&token.token_type, token))
+                    {
+                        (name, token.lines.1)
+                    } else {
+                        errors.push(CompilerError {
+                            lines: (function_start, function_start),
+                            error: "Parameter name expected.".into(),
+                        });
+                        return None;
+                    };
+                *current_token += 1;
+
+                let colon_line_end = if let Some((TokenType::Colon, token)) = tokens
+                    .get(*current_token)
+                    .map(|token| (&token.token_type, token))
+                {
+                    token.lines.1
+                } else {
+                    errors.push(CompilerError {
+                        lines: (function_start, parameter_name_line_end),
+                        error: "Colon expected after parameter.".into(),
+                    });
+                    return None;
+                };
+                *current_token += 1;
+
+                let parameter_type = parse_type(tokens, current_token, errors)?;
+                parameters.push((parameter_name.clone(), None, parameter_type));
+
+                match tokens
+                    .get(*current_token)
+                    .map(|token| (&token.token_type, token))
+                {
+                    Some((TokenType::Comma, _)) => {
+                        *current_token += 1;
+                    }
+                    Some((TokenType::RightParenthesis, token)) => {
+                        *current_token += 1;
+                        right_parenthesis_end_line = token.lines.1;
+                        break;
+                    }
+                    Some((_, token)) => {
+                        errors.push(CompilerError {
+                            lines: (function_start, token.lines.1),
+                            error: "Comma expected after parameter".into(),
+                        });
+                        return None;
+                    }
+                    None => {
+                        errors.push(CompilerError {
+                            lines: (function_start, colon_line_end),
+                            error: "Comma expected after parameter".into(),
+                        });
+                        return None;
+                    }
+                }
+            }
+
+            let return_type = if tokens.get(*current_token).map(|token| &token.token_type)
+                == Some(&TokenType::Arrow)
+            {
+                *current_token += 1;
+                parse_type(tokens, current_token, errors)?
+            } else {
+                Type::Void
+            };
+
+            let Some(body) = parse_block_statement(tokens, current_token, errors) else {
+                errors.push(CompilerError { lines: (function_start, right_parenthesis_end_line), error: "Expected block statement for function.".into() });
+                return None;
+            };
+
+            Some(Statement {
+                lines: (function_start, body.lines.1),
+                statement: StatementType::FunctionDeclaration {
+                    name: name.clone(),
+                    parameters,
+                    return_type,
+                    body: body.into(),
+                    shadow_id: None,
+                },
+            })
+        }
+        Some((TokenType::Return, token)) => {
+            let return_start = token.lines.0;
+            *current_token += 1;
+
+            let (expression, semicolon_line) = if let Some((&TokenType::Semicolon, token)) = tokens
+                .get(*current_token)
+                .map(|token| (&token.token_type, token))
+            {
+                *current_token += 1;
+                (None, token.lines.1)
+            } else {
+                let Some(expression) = parse_expression(tokens, current_token, errors) else {
+                    panic_forward(tokens, current_token);
+                    return None;
+                };
+                let semicolon_line = if let Some((&TokenType::Semicolon, token)) = tokens
+                    .get(*current_token)
+                    .map(|token| (&token.token_type, token))
+                {
+                    token.lines.1
+                } else {
+                    errors.push(CompilerError {
+                        lines: expression.lines,
+                        error: "Expected semicolon at the end of the statement.".into(),
+                    });
+                    panic_forward(tokens, current_token);
+                    return None;
+                };
+                *current_token += 1;
+                (Some(expression), semicolon_line)
+            };
+
+            Some(Statement {
+                lines: (return_start, semicolon_line),
+                statement: StatementType::Return(expression),
             })
         }
         _ => {
@@ -535,6 +744,64 @@ fn parse_type(
                     }
                 }
             }
+        }
+        Some((TokenType::Fn, token)) => {
+            let start_line = token.lines.0;
+            *current_token += 1;
+
+            if tokens.get(*current_token).map(|token| &token.token_type)
+                != Some(&TokenType::LeftParenthesis)
+            {
+                errors.push(CompilerError {
+                    lines: token.lines,
+                    error: "Expected ( after fn".into(),
+                });
+                return None;
+            }
+            *current_token += 1;
+
+            let mut parameters = vec![];
+            if tokens.get(*current_token).map(|token| &token.token_type)
+                == Some(&TokenType::RightParenthesis)
+            {
+                *current_token += 1;
+            } else {
+                loop {
+                    let parameter_type = parse_type(tokens, current_token, errors)?;
+                    parameters.push(parameter_type);
+
+                    match tokens.get(*current_token).map(|token| &token.token_type) {
+                        Some(TokenType::RightParenthesis) => {
+                            *current_token += 1;
+                            break;
+                        }
+                        Some(TokenType::Comma) => {
+                            *current_token += 1;
+                        }
+                        _ => {
+                            errors.push(CompilerError {
+                                lines: (start_line, token.lines.1),
+                                error: "Invalid type.".into(),
+                            });
+                            return None;
+                        }
+                    }
+                }
+            }
+
+            let return_type = if tokens.get(*current_token).map(|token| &token.token_type)
+                == Some(&TokenType::Arrow)
+            {
+                *current_token += 1;
+                parse_type(tokens, current_token, errors)?
+            } else {
+                Type::Void
+            };
+
+            Some(Type::Function {
+                parameters,
+                return_type: return_type.into(),
+            })
         }
         Some((_, token)) => {
             errors.push(CompilerError {
@@ -793,7 +1060,7 @@ fn parse_tuple_access(
     current_token: &mut usize,
     errors: &mut Vec<CompilerError>,
 ) -> Option<Expression> {
-    let Some(mut expression) = parse_primary(tokens, current_token, errors) else {
+    let Some(mut expression) = parse_function_call(tokens, current_token, errors) else {
         return None;
     };
 
@@ -846,6 +1113,47 @@ fn parse_tuple_access(
     }
 }
 
+fn parse_function_call(
+    tokens: &Vec<Token>,
+    current_token: &mut usize,
+    errors: &mut Vec<CompilerError>,
+) -> Option<Expression> {
+    let mut expression = parse_primary(tokens, current_token, errors)?;
+
+    loop {
+        if tokens.get(*current_token).map(|token| &token.token_type)
+            != Some(&TokenType::LeftParenthesis)
+        {
+            return Some(expression);
+        }
+
+        let (end_line, arguments) = if let Some((&TokenType::RightParenthesis, token)) = tokens
+            .get(*current_token + 1)
+            .map(|token| (&token.token_type, token))
+        {
+            *current_token += 2;
+            (token.lines.1, vec![])
+        } else {
+            // Since we have a left parenthesis, we can just call parse primary,
+            // and get the arguments.
+            let arguments = parse_primary(tokens, current_token, errors)?;
+            match arguments.expression_type {
+                ExpressionType::Grouping(expression) => (arguments.lines.1, vec![*expression]),
+                ExpressionType::Tuple(expressions) => (arguments.lines.1, expressions),
+                _ => unreachable!("parse_primary can only give a Grouping or Tuple with a starting left parenthesis"),
+            }
+        };
+
+        expression = Expression {
+            lines: (expression.lines.0, end_line),
+            expression_type: ExpressionType::FunctionCall {
+                function: expression.into(),
+                arguments,
+            },
+        };
+    }
+}
+
 fn parse_primary(
     tokens: &Vec<Token>,
     current_token: &mut usize,
@@ -871,7 +1179,11 @@ fn parse_primary(
             TokenType::Variable(variable) => {
                 *current_token += 1;
                 Some(Expression {
-                    expression_type: ExpressionType::Variable(variable.clone()),
+                    expression_type: ExpressionType::Variable {
+                        name: variable.clone(),
+                        shadow_id: None, // Shadow id's will be set during variable and type checking.
+                        parent_height: None,
+                    },
                     lines: token.lines,
                 })
             }

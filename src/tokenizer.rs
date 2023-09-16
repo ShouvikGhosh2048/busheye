@@ -1,24 +1,77 @@
-use std::{error::Error, fmt::Display};
+use std::{
+    error::Error,
+    fmt::{Debug, Display},
+    rc::Rc,
+};
+
+use crate::parser::Statement;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
+    Void,
+    Any,
     Number,
     String,
     Boolean,
     Tuple(Vec<Type>),
+    Function {
+        parameters: Vec<Type>,
+        return_type: Box<Type>,
+    },
+}
+
+#[derive(Clone)]
+pub enum FunctionBody {
+    Statement(Box<Statement>),
+    RustClosure {
+        id: usize,
+        closure: Rc<dyn Fn(Vec<Value>) -> Value>,
+    },
+}
+
+impl Debug for FunctionBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FunctionBody::Statement(statement) => write!(f, "{statement:?}"),
+            FunctionBody::RustClosure { .. } => write!(f, "Rust closure"),
+        }
+    }
+}
+
+impl PartialEq for FunctionBody {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (FunctionBody::Statement(statement1), FunctionBody::Statement(statement2)) => {
+                statement1 == statement2
+            }
+            (
+                FunctionBody::RustClosure { id: id1, .. },
+                FunctionBody::RustClosure { id: id2, .. },
+            ) => id1 == id2,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
+    Void,
     Number(f64),
     String(String),
     Boolean(bool),
     Tuple(Vec<Value>),
+    Function {
+        parameters: Vec<(String, Option<usize>, Type)>, // Option<usize> is the shadow_id of the parameter.
+        return_type: Type,
+        body: FunctionBody,
+        parent_environment: usize, // ID of the environment in which the function was defined.
+    },
 }
 
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Value::Void => write!(f, "void"),
             Value::Number(number) => write!(f, "{number}"),
             Value::String(string) => write!(f, "{string}"),
             Value::Boolean(boolean) => write!(f, "{boolean}"),
@@ -33,6 +86,9 @@ impl Display for Value {
                 }
                 write!(f, ")")
             }
+            Value::Function { .. } => {
+                write!(f, "function") // TODO: Improve this
+            }
         }
     }
 }
@@ -40,12 +96,24 @@ impl Display for Value {
 impl Value {
     pub fn value_type(&self) -> Type {
         match self {
+            Value::Void => Type::Void,
             Value::Number(_) => Type::Number,
             Value::String(_) => Type::String,
             Value::Boolean(_) => Type::Boolean,
             Value::Tuple(values) => {
                 Type::Tuple(values.iter().map(|value| value.value_type()).collect())
             }
+            Value::Function {
+                parameters,
+                return_type,
+                ..
+            } => Type::Function {
+                parameters: parameters
+                    .iter()
+                    .map(|(_, _, parameter_type)| parameter_type.clone())
+                    .collect(),
+                return_type: return_type.clone().into(),
+            },
         }
     }
 }
@@ -70,10 +138,13 @@ pub enum TokenType {
     RightParenthesis,
     LeftBrace,
     RightBrace,
+    Arrow,
     Let,
     If,
     Else,
     While,
+    Fn,
+    Return,
     Colon,
     Semicolon,
     Comma,
@@ -106,10 +177,21 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
                 lines: (line, line),
                 token_type: TokenType::Plus,
             }),
-            '-' => tokens.push(Token {
-                lines: (line, line),
-                token_type: TokenType::Minus,
-            }),
+            '-' => match chars.peek() {
+                Some('>') => {
+                    tokens.push(Token {
+                        lines: (line, line),
+                        token_type: TokenType::Arrow,
+                    });
+                    chars.next();
+                }
+                _ => {
+                    tokens.push(Token {
+                        lines: (line, line),
+                        token_type: TokenType::Minus,
+                    });
+                }
+            },
             '*' => tokens.push(Token {
                 lines: (line, line),
                 token_type: TokenType::Star,
@@ -370,6 +452,14 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, Vec<Box<dyn Error>>> {
                     "bool" => tokens.push(Token {
                         lines: (line, line),
                         token_type: TokenType::Bool,
+                    }),
+                    "fn" => tokens.push(Token {
+                        lines: (line, line),
+                        token_type: TokenType::Fn,
+                    }),
+                    "return" => tokens.push(Token {
+                        lines: (line, line),
+                        token_type: TokenType::Return,
                     }),
                     _ => tokens.push(Token {
                         lines: (line, line),

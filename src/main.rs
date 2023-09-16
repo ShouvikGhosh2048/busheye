@@ -4,15 +4,16 @@ mod tokenizer;
 mod variable_and_type_check;
 
 use std::{
-    collections::HashMap,
     env, fs,
     io::{self, Write},
+    rc::Rc,
 };
 
-use tokenizer::Value;
+use interpreter::Variables;
+use tokenizer::{FunctionBody, Type, Value};
 use variable_and_type_check::check_types;
 
-fn run(program: &str, global_variables: &mut HashMap<String, Value>) {
+fn run(program: &str, variables: &mut Variables) {
     let tokens = match tokenizer::tokenize(program) {
         Ok(tokens) => tokens,
         Err(errors) => {
@@ -23,11 +24,7 @@ fn run(program: &str, global_variables: &mut HashMap<String, Value>) {
         }
     };
 
-    let mut global_types = HashMap::new();
-    for (variable, value) in global_variables.iter() {
-        global_types.insert(variable.clone(), value.value_type());
-    }
-    let statements = match parser::parse(&tokens) {
+    let mut statements = match parser::parse(&tokens) {
         Ok(statements) => statements,
         Err(errors) => {
             let lines = program.lines().collect::<Vec<_>>();
@@ -52,7 +49,7 @@ fn run(program: &str, global_variables: &mut HashMap<String, Value>) {
         }
     };
 
-    if let Err(errors) = check_types(&statements, &global_types) {
+    if let Err(errors) = check_types(&mut statements, &variables.environments[&0]) {
         let lines = program.lines().collect::<Vec<_>>();
         for error in errors {
             let index_width = error.lines.1.ilog10() + 1;
@@ -74,17 +71,37 @@ fn run(program: &str, global_variables: &mut HashMap<String, Value>) {
         return;
     }
 
-    interpreter::interpret(&statements, global_variables);
+    interpreter::interpret(&statements, variables);
 }
 
 fn run_repl() {
-    let mut global_variables = HashMap::new();
+    let mut variables = Variables::new();
+    variables
+        .environments
+        .get_mut(&0)
+        .unwrap()
+        .variables
+        .insert(
+            ("print".to_string(), 0), // TODO: Prefer setting shadow_id somewhere else.
+            Value::Function {
+                parameters: vec![("value".to_string(), Some(0), Type::Any)],
+                return_type: Type::Void,
+                body: FunctionBody::RustClosure {
+                    id: 0,
+                    closure: Rc::new(|values| {
+                        println!("{}", values[0]);
+                        Value::Void
+                    }),
+                },
+                parent_environment: 0, // Defined in global environment.
+            },
+        );
     loop {
         print!("> ");
         io::stdout().flush().unwrap();
         let mut line = String::new();
         io::stdin().read_line(&mut line).unwrap();
-        run(&line, &mut global_variables);
+        run(&line, &mut variables);
     }
 }
 
@@ -94,7 +111,7 @@ fn run_file(filename: &str) {
         println!("Couldn't read the program.");
         return;
     };
-    run(&program, &mut HashMap::new());
+    run(&program, &mut Variables::new());
 }
 
 fn main() {
