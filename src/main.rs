@@ -74,8 +74,7 @@ fn run(program: &str, variables: &mut Variables) {
     interpreter::interpret(&statements, variables);
 }
 
-fn run_repl() {
-    let mut variables = Variables::new();
+fn setup_variables(variables: &mut Variables) {
     variables
         .environments
         .get_mut(&0)
@@ -96,6 +95,12 @@ fn run_repl() {
                 parent_environment: 0, // Defined in global environment.
             },
         );
+}
+
+fn run_repl() {
+    let mut variables = Variables::new();
+    setup_variables(&mut variables);
+
     loop {
         print!("> ");
         io::stdout().flush().unwrap();
@@ -111,7 +116,10 @@ fn run_file(filename: &str) {
         println!("Couldn't read the program.");
         return;
     };
-    run(&program, &mut Variables::new());
+
+    let mut variables = Variables::new();
+    setup_variables(&mut variables);
+    run(&program, &mut variables);
 }
 
 fn main() {

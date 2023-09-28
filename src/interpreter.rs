@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     parser::{
@@ -15,6 +15,8 @@ pub struct Environment {
 pub struct Variables {
     current_environment: usize,
     pub environments: HashMap<usize, Environment>,
+    current_environments: Vec<usize>,
+    garbage_collection_counter: usize,
     last_id: usize,
 }
 
@@ -32,7 +34,78 @@ impl Variables {
             current_environment: 0,
             environments,
             last_id: 0,
+            current_environments: vec![],
+            garbage_collection_counter: 100,
         }
+    }
+
+    fn add_reachable_environments(
+        queued_environments: &mut HashSet<usize>,
+        environment_queue: &mut VecDeque<usize>,
+        value: &Value,
+    ) {
+        match value {
+            Value::Function {
+                parent_environment, ..
+            } => {
+                if !queued_environments.contains(parent_environment) {
+                    environment_queue.push_back(*parent_environment);
+                    queued_environments.insert(*parent_environment);
+                }
+            }
+            Value::Tuple(values) => {
+                for value in values {
+                    Variables::add_reachable_environments(
+                        queued_environments,
+                        environment_queue,
+                        value,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_garbage(&mut self) {
+        let mut queued_environments = HashSet::new();
+        let mut environment_queue = VecDeque::new();
+
+        environment_queue.extend(self.current_environments.iter());
+        queued_environments.extend(self.current_environments.iter());
+
+        environment_queue.push_back(self.current_environment);
+        queued_environments.insert(self.current_environment);
+
+        while let Some(environment_id) = environment_queue.pop_front() {
+            let environment = &self.environments[&environment_id];
+
+            if let Some(parent_environment) = environment.parent {
+                if !queued_environments.contains(&parent_environment) {
+                    environment_queue.push_back(parent_environment);
+                    queued_environments.insert(parent_environment);
+                }
+            }
+
+            for value in environment.variables.values() {
+                Variables::add_reachable_environments(
+                    &mut queued_environments,
+                    &mut environment_queue,
+                    value,
+                );
+            }
+        }
+
+        let non_queued_environments = self
+            .environments
+            .keys()
+            .copied()
+            .filter(|key| !queued_environments.contains(key))
+            .collect::<Vec<_>>();
+        for environment_id in non_queued_environments {
+            self.environments.remove(&environment_id);
+        }
+
+        self.garbage_collection_counter = 100;
     }
 
     fn push_environment(&mut self) {
@@ -45,10 +118,24 @@ impl Variables {
         );
         self.current_environment = self.last_id + 1;
         self.last_id += 1;
+
+        self.garbage_collection_counter -= 1;
+        if self.garbage_collection_counter == 0 {
+            self.collect_garbage();
+        }
     }
 
     fn pop_environment(&mut self) {
         self.current_environment = self.environments[&self.current_environment].parent.unwrap();
+    }
+
+    fn push_function_environment(&mut self, environment: usize) {
+        self.current_environments.push(self.current_environment);
+        self.current_environment = environment;
+    }
+
+    fn pop_function_environment(&mut self) {
+        self.current_environment = self.current_environments.pop().unwrap();
     }
 
     fn get_variable(
@@ -459,8 +546,7 @@ fn interpret_expression(expression: &Expression, variables: &mut Variables) -> V
 
             match body {
                 FunctionBody::Statement(statement) => {
-                    let current_environment = variables.current_environment;
-                    variables.current_environment = parent_environment;
+                    variables.push_function_environment(parent_environment);
                     variables.push_environment();
                     for ((parameter, shadow_id), value) in parameters
                         .into_iter()
@@ -472,7 +558,7 @@ fn interpret_expression(expression: &Expression, variables: &mut Variables) -> V
                     let return_value =
                         interpret_statement(&statement, variables).unwrap_or(Value::Void);
                     variables.pop_environment();
-                    variables.current_environment = current_environment;
+                    variables.pop_function_environment();
                     return_value
                 }
                 FunctionBody::RustClosure { closure, .. } => closure(argument_values),
