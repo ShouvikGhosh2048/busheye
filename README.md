@@ -1,7 +1,7 @@
 # busheye
 Programming language named after [Busheye](https://wiki.cassettebeasts.com/wiki/Busheye).
 
-I made this after reading [Crafting Interpreters]("https://craftinginterpreters.com/"). It is similar to Lox (language wise and implementation wise), but has additional static typing.
+I made this after reading [Crafting Interpreters](https://craftinginterpreters.com/). It is similar to Lox (language wise and implementation wise), but has additional static typing.
 
 ## Example code:
 ```
