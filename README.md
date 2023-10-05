@@ -3,7 +3,7 @@ Programming language named after [Busheye](https://wiki.cassettebeasts.com/wiki/
 
 I made this after reading [Crafting Interpreters](https://craftinginterpreters.com/). It is similar to Lox (language wise and implementation wise), but has additional static typing.
 
-## Example code:
+## Example
 ```
 let a = 1;
 print(a);
