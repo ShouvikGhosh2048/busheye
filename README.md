@@ -1,5 +1,5 @@
-# busheye
-Programming language named after [Busheye](https://wiki.cassettebeasts.com/wiki/Busheye).
+# decibelle
+Programming language named after [Decibelle](https://wiki.cassettebeasts.com/wiki/Decibelle).
 
 I made this after reading [Crafting Interpreters](https://craftinginterpreters.com/). It is similar to Lox (language wise and implementation wise), but has additional static typing.
 
